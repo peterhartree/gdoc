@@ -31,6 +31,17 @@ def _make_args(**overrides):
     return SimpleNamespace(**defaults)
 
 
+@pytest.fixture(autouse=True)
+def _stub_single_tab():
+    """Default `count_document_tabs` to `1` for the whole test module.
+
+    The multi-tab warning would otherwise call the real Docs API.
+    Tests asserting the warning override this with their own patch.
+    """
+    with patch("gdoc.api.docs.count_document_tabs", return_value=1):
+        yield
+
+
 class TestCatMarkdown:
     @patch("gdoc.state.update_state_after_command")
     @patch("gdoc.notify.pre_flight", return_value=None)
@@ -449,3 +460,60 @@ class TestCatNoImages:
         assert rc == 0
         out = capsys.readouterr().out
         assert "![" not in out
+
+
+class TestCatMultiTabWarning:
+    """Cat without --tab on a multi-tab doc warns to stderr."""
+
+    @patch("gdoc.state.update_state_after_command")
+    @patch("gdoc.api.docs.count_document_tabs", return_value=3)
+    @patch("gdoc.notify.pre_flight", return_value=None)
+    @patch("gdoc.api.drive.get_drive_service")
+    @patch("gdoc.api.drive.export_doc", return_value="# Hello\n")
+    def test_warns_on_multi_tab_default(
+        self, _export, _svc, _pf, _count, _update, capsys,
+    ):
+        args = _make_args()
+        rc = cmd_cat(args)
+        assert rc == 0
+        captured = capsys.readouterr()
+        # Content still goes to stdout; warning goes to stderr.
+        assert "# Hello" in captured.out
+        assert "WARN" in captured.err
+        assert "multiple tabs" in captured.err
+
+    @patch("gdoc.state.update_state_after_command")
+    @patch("gdoc.api.docs.count_document_tabs", return_value=3)
+    @patch("gdoc.notify.pre_flight", return_value=None)
+    @patch("gdoc.api.drive.get_drive_service")
+    @patch("gdoc.api.drive.export_doc", return_value="# Hello\n")
+    def test_quiet_suppresses_warning(
+        self, _export, _svc, _pf, mock_count, _update, capsys,
+    ):
+        args = _make_args(quiet=True)
+        rc = cmd_cat(args)
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "WARN" not in captured.err
+        # Quiet mode skips the API lookup entirely.
+        mock_count.assert_not_called()
+
+    @patch("gdoc.state.update_state_after_command")
+    @patch("gdoc.api.docs.count_document_tabs")
+    @patch("gdoc.notify.pre_flight", return_value=None)
+    @patch("gdoc.api.docs.get_document_tabs")
+    @patch("gdoc.api.docs.get_tab_text", return_value="# Tab body\n")
+    def test_tab_scoped_does_not_warn(
+        self, _gtt, mock_tabs, _pf, mock_count, _update, capsys,
+    ):
+        # --tab path is already tab-aware; the safety warning must
+        # not fire (and must not even hit the count helper).
+        mock_tabs.return_value = [
+            {"id": "t.x", "title": "Notes", "index": 0, "nesting_level": 0},
+        ]
+        args = _make_args(tab="Notes")
+        rc = cmd_cat(args)
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "WARN" not in captured.err
+        mock_count.assert_not_called()

@@ -24,6 +24,17 @@ def _make_args(**overrides):
     return SimpleNamespace(**defaults)
 
 
+@pytest.fixture(autouse=True)
+def _stub_single_tab():
+    """Default `count_document_tabs` to `1` for the whole test module.
+
+    The multi-tab warning would otherwise call the real Docs API.
+    Tests asserting the warning override this with their own patch.
+    """
+    with patch("gdoc.api.docs.count_document_tabs", return_value=1):
+        yield
+
+
 class TestPullBasic:
     @patch("gdoc.state.update_state_after_command")
     @patch("gdoc.api.drive.get_drive_service")
@@ -263,3 +274,52 @@ class TestPullPlain:
         assert rc == 0
         out = capsys.readouterr().out
         assert f"path\t{f}" in out
+
+
+class TestPullMultiTabWarning:
+    """Pull on multi-tab docs prints a stderr warning but still succeeds."""
+
+    @patch("gdoc.state.update_state_after_command")
+    @patch("gdoc.api.docs.count_document_tabs", return_value=4)
+    @patch("gdoc.api.drive.get_file_info", return_value={
+        "name": "My Doc", "version": "5",
+    })
+    @patch("gdoc.api.drive.export_doc", return_value="# Hello\n")
+    @patch("gdoc.notify.pre_flight", return_value=None)
+    @patch("gdoc.api.drive.get_drive_service")
+    def test_warns_on_multi_tab(
+        self, _svc, _pf, _export, _info, _count, _update,
+        capsys, tmp_path,
+    ):
+        f = tmp_path / "doc.md"
+        args = _make_args(file=str(f))
+        rc = cmd_pull(args)
+        assert rc == 0
+        captured = capsys.readouterr()
+        # File still gets written (read-only on the cloud doc).
+        assert f.read_text().endswith("# Hello\n")
+        # Warning goes to stderr, not stdout.
+        assert "WARN" in captured.err
+        assert "multiple tabs" in captured.err
+        assert "do not `gdoc push`" in captured.err.lower()
+
+    @patch("gdoc.state.update_state_after_command")
+    @patch("gdoc.api.docs.count_document_tabs", return_value=4)
+    @patch("gdoc.api.drive.get_file_info", return_value={
+        "name": "My Doc", "version": "5",
+    })
+    @patch("gdoc.api.drive.export_doc", return_value="# Hello\n")
+    @patch("gdoc.notify.pre_flight", return_value=None)
+    @patch("gdoc.api.drive.get_drive_service")
+    def test_quiet_suppresses_warning(
+        self, _svc, _pf, _export, _info, mock_count, _update,
+        capsys, tmp_path,
+    ):
+        f = tmp_path / "doc.md"
+        args = _make_args(file=str(f), quiet=True)
+        rc = cmd_pull(args)
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "WARN" not in captured.err
+        # Quiet mode skips the API lookup entirely.
+        mock_count.assert_not_called()
