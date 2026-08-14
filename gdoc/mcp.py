@@ -27,6 +27,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 from typing import Any
@@ -126,6 +127,25 @@ _EXTRA_REQUIRED: dict[str, tuple[str, ...]] = {
     # confirm_destructive() cannot prompt over MCP (stdin is detached)
     "delete-comment": ("force",),
 }
+
+# Cross-parameter requirements JSON Schema could only express with a
+# root-level oneOf/anyOf, which several MCP clients reject or ignore.
+# Stated in the tool description instead; the CLI repeats the same
+# constraint in its error message at call time.
+_DESCRIPTION_NOTES: dict[str, str] = {
+    "diff": "Exactly one of `rev` or `since` is required over MCP.",
+    "share": "Exactly one of `email`, `domain`, or `anyone` is required.",
+    "edit": (
+        "Text replacement needs `old_text` and `new_text`; `cell` mode "
+        "addresses a table cell instead."
+    ),
+}
+
+# `new` imports markdown images: extract_images() resolves non-http(s)
+# references against the materialised temp file's directory and uploads
+# what it finds, so inline text could still read server files that the
+# hidden path parameters no longer can.
+_IMAGE_REF = re.compile(r"!\[[^\]]*\]\(\s*([^)\s]+)")
 
 # Parser-level plumbing that must not become a tool parameter.
 _SKIP_DESTS = frozenset({
@@ -233,6 +253,9 @@ def _description_for(command: str, parser: argparse.ArgumentParser) -> str:
     text = (parser.description or "").strip()
     if not text:
         text = (getattr(parser, "_gdoc_help", "") or "").strip()
+    note = _DESCRIPTION_NOTES.get(command)
+    if note:
+        text = f"{text}\n\n{note}" if text else note
     if not EXPOSED_COMMANDS[command]:
         warning = "Writes to Google Docs/Drive."
         text = f"{text}\n\n{warning}" if text else warning
@@ -414,6 +437,14 @@ def call_command(
             "`force: true` is required: deletion cannot prompt for "
             "confirmation over MCP"
         )
+
+    if command == "new" and arguments.get("text"):
+        for target in _IMAGE_REF.findall(arguments["text"]):
+            if not target.startswith(("http://", "https://")):
+                raise ValueError(
+                    f"local image reference in text: {target!r} — over MCP, "
+                    "images must be http(s) URLs"
+                )
 
     file_arg = _TEXT_TO_FILE.get(command)
     if (

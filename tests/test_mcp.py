@@ -239,6 +239,33 @@ def test_write_requires_inline_text():
         mcp.call_command("write", {"doc": "D"})
 
 
+def test_new_rejects_local_image_references(mocker):
+    """`new` imports images relative to the materialised temp file, so a
+    local path in inline text could still read server files."""
+    with pytest.raises(ValueError, match="local image reference"):
+        mcp.call_command(
+            "new", {"title": "T", "text": "hi ![x](/tmp/private.png)"},
+        )
+    with pytest.raises(ValueError, match="local image reference"):
+        mcp.call_command(
+            "new", {"title": "T", "text": "![x](../secret.png)"},
+        )
+    run = mocker.patch("gdoc.cli.run_argv", return_value=0)
+    mcp.call_command(
+        "new", {"title": "T", "text": "![x](https://example.com/i.png)"},
+    )
+    assert run.called
+
+
+def test_alternative_requirements_are_stated_in_descriptions():
+    tools = mcp.build_tools()
+    assert "Exactly one of `rev` or `since`" in tools["gdoc_diff"]["description"]
+    assert (
+        "Exactly one of `email`, `domain`, or `anyone`"
+        in tools["gdoc_share"]["description"]
+    )
+
+
 def test_delete_comment_without_true_force_is_rejected(mocker):
     # Schema `required` cannot force a boolean to be true.
     with pytest.raises(ValueError, match="`force: true` is required"):
