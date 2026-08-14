@@ -4,7 +4,7 @@ All notable changes to `gdoc` are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.20.0] — 2026-08-14
 
 ### Added
 - **MCP server: `gdoc mcp`.** Serves gdoc over the Model Context Protocol
