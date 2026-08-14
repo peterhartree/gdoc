@@ -113,6 +113,16 @@ _LOCAL_PATH_CHOICES: dict[str, dict[str, frozenset[str]]] = {
 # not failure. Real errors still print an ERR: line to stderr.
 _DIFF_EXIT_COMMANDS = frozenset({"diff"})
 
+# MCP-only schema tightenings: parameters the CLI can satisfy another way
+# (an alternative flag, an interactive prompt) that MCP cannot, so a
+# schema-valid call would otherwise be guaranteed to fail at runtime.
+_EXTRA_REQUIRED: dict[str, tuple[str, ...]] = {
+    # -v/--value is the only data source left once --file/--stdin are hidden
+    "cells": ("value",),
+    # confirm_destructive() cannot prompt over MCP (stdin is detached)
+    "delete-comment": ("force",),
+}
+
 # Parser-level plumbing that must not become a tool parameter.
 _SKIP_DESTS = frozenset({
     "help",
@@ -178,6 +188,7 @@ def _schema_for(command: str, parser: argparse.ArgumentParser) -> dict[str, Any]
     required: list[str] = []
     hidden = _LOCAL_PATH_PARAMS.get(command, frozenset())
     hidden_choices = _LOCAL_PATH_CHOICES.get(command, {})
+    extra_required = _EXTRA_REQUIRED.get(command, ())
 
     for action in parser._actions:
         if action.dest in _SKIP_DESTS or action.dest in hidden:
@@ -191,12 +202,14 @@ def _schema_for(command: str, parser: argparse.ArgumentParser) -> dict[str, Any]
         removed = hidden_choices.get(action.dest)
         if removed and "enum" in prop:
             prop["enum"] = [c for c in prop["enum"] if c not in removed]
+        if action.dest in extra_required and prop.get("type") == "array":
+            prop["minItems"] = 1
         properties[action.dest] = prop
 
         is_positional = not action.option_strings
         if is_positional and action.nargs not in ("?", "*"):
             required.append(action.dest)
-        elif action.required:  # e.g. `insert --tab`
+        elif action.required or action.dest in extra_required:
             required.append(action.dest)
 
     schema: dict[str, Any] = {"type": "object", "properties": properties}
@@ -389,6 +402,14 @@ def call_command(
         raise ValueError(f"unknown command: {command}")
 
     _reject_local_paths(command, arguments)
+
+    # Schema `required` cannot force a boolean to be true, so guard here:
+    # with stdin detached, confirm_destructive() can never prompt.
+    if command == "delete-comment" and not arguments.get("force"):
+        raise ValueError(
+            "`force: true` is required: deletion cannot prompt for "
+            "confirmation over MCP"
+        )
 
     file_arg = _TEXT_TO_FILE.get(command)
     if (

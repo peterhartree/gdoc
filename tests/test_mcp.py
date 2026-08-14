@@ -112,6 +112,22 @@ def test_required_options_are_marked_required():
     assert "tab" in schema["required"]
 
 
+def test_cells_requires_a_value():
+    schema = mcp.build_tools(allow={"cells"})["gdoc_cells"]["inputSchema"]
+    # With --file/--stdin hidden, -v/--value is the only data source; a
+    # call without it would always fail at runtime.
+    assert "value" in schema["required"]
+    assert schema["properties"]["value"]["minItems"] == 1
+
+
+def test_delete_comment_requires_force():
+    schema = mcp.build_tools(allow={"delete-comment"})[
+        "gdoc_delete_comment"
+    ]["inputSchema"]
+    # With stdin detached there is no confirmation prompt to answer.
+    assert "force" in schema["required"]
+
+
 def test_env_allowlist_filters_tools(monkeypatch):
     monkeypatch.setenv("GDOC_ALLOW_COMMANDS", "mcp,cat,ls")
     tools = mcp.build_tools()
@@ -213,6 +229,21 @@ def test_html_diff_choice_is_rejected():
 def test_write_requires_inline_text():
     with pytest.raises(ValueError, match="`text` is required"):
         mcp.call_command("write", {"doc": "D"})
+
+
+def test_delete_comment_without_true_force_is_rejected(mocker):
+    # Schema `required` cannot force a boolean to be true.
+    with pytest.raises(ValueError, match="`force: true` is required"):
+        mcp.call_command("delete-comment", {"doc": "D", "comment_id": "c1"})
+    with pytest.raises(ValueError, match="`force: true` is required"):
+        mcp.call_command(
+            "delete-comment", {"doc": "D", "comment_id": "c1", "force": False},
+        )
+    run = mocker.patch("gdoc.cli.run_argv", return_value=0)
+    mcp.call_command(
+        "delete-comment", {"doc": "D", "comment_id": "c1", "force": True},
+    )
+    assert run.called
 
 
 # -- command execution ---------------------------------------------------
