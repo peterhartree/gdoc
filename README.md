@@ -261,8 +261,8 @@ expired auth, still do).
 ## Desktop chat apps (MCP)
 
 `gdoc mcp` runs gdoc as a [Model Context Protocol](https://modelcontextprotocol.io)
-server on stdio, so chat clients that launch a local server — Claude
-Desktop, ChatGPT desktop, and others — can use gdoc without shell access.
+server on stdio, so clients that launch a local server — Claude Desktop,
+the Codex CLI, and others — can use gdoc without shell access.
 Each supported subcommand becomes a tool (`gdoc_cat`, `gdoc_edit`, …),
 with its parameters derived from the CLI itself.
 
@@ -289,13 +289,16 @@ Developer → Edit Config), then restart the app:
 If the app can't find `gdoc` on its PATH, use the absolute path from
 `which gdoc`.
 
-**ChatGPT desktop** — add to `~/.codex/config.toml`:
+**Codex CLI** — add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.gdoc]
 command = "gdoc"
 args = ["mcp"]
 ```
+
+ChatGPT desktop itself only connects to *remote* MCP servers over HTTPS,
+so it cannot launch `gdoc mcp` directly.
 
 Useful flags:
 

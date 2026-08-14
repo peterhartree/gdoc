@@ -1,9 +1,9 @@
 """Model Context Protocol server exposing gdoc subcommands as MCP tools.
 
-`gdoc mcp` speaks MCP over stdio so desktop chat clients (Claude Desktop,
-ChatGPT desktop, and anything else that launches a local stdio server) can
-drive gdoc directly, instead of gdoc only being reachable from a coding
-agent with shell access.
+`gdoc mcp` speaks MCP over stdio so clients that launch a local stdio
+server (Claude Desktop, the Codex CLI, and others) can drive gdoc
+directly, instead of gdoc only being reachable from a coding agent with
+shell access.
 
 Design notes:
 
@@ -16,6 +16,10 @@ Design notes:
   command allowlist and the read/write classification below are manual.
 - **Commands run in-process** via the same dispatch the CLI uses, with
   stdout captured. Nothing shells out.
+- **Validation errors here are deliberately not `GdocError`s.** Everything
+  raised in this module surfaces as a JSON-RPC error or an `isError` tool
+  result; nothing reaches a process exit path, so the CLI's
+  exit-code-carrying exception convention does not apply.
 """
 
 import argparse
@@ -476,14 +480,9 @@ def _reset_account_state(account: str | None) -> None:
     if account == get_active_account():
         return
 
-    from gdoc.api import get_drive_service, get_sheets_service
-    from gdoc.api.docs import get_docs_service
-    from gdoc.api.revisions import _get_session
+    from gdoc.api import clear_service_caches
 
-    for cached in (
-        get_drive_service, get_sheets_service, get_docs_service, _get_session,
-    ):
-        cached.cache_clear()
+    clear_service_caches()
     set_active_account(account)
 
 

@@ -8,6 +8,14 @@ import pytest
 
 from gdoc import mcp
 
+
+@pytest.fixture(autouse=True)
+def _clean_gdoc_env(monkeypatch):
+    """Ambient GDOC_* settings must not change tool construction."""
+    monkeypatch.delenv("GDOC_ALLOW_COMMANDS", raising=False)
+    monkeypatch.delenv("GDOC_ACCOUNT", raising=False)
+
+
 # -- tool construction ---------------------------------------------------
 
 

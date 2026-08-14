@@ -30,3 +30,19 @@ def get_sheets_service():
 
     creds = get_credentials()
     return build("sheets", "v4", credentials=creds)
+
+
+def clear_service_caches() -> None:
+    """Forget every cached, account-specific service object.
+
+    A long-lived process (`gdoc mcp`) calls this when the active account
+    changes. Keep it in sync with any new cached service: one missed here
+    keeps serving the previous account's credentials.
+    """
+    from gdoc.api.docs import get_docs_service
+    from gdoc.api.revisions import _get_session
+
+    get_drive_service.cache_clear()
+    get_sheets_service.cache_clear()
+    get_docs_service.cache_clear()
+    _get_session.cache_clear()

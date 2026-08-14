@@ -3529,8 +3529,8 @@ def build_parser() -> GdocArgumentParser:
         help="Serve gdoc to desktop chat clients over MCP (stdio)",
         description=(
             "Run gdoc as a Model Context Protocol server on stdin/stdout, so "
-            "clients that launch a local stdio server — Claude Desktop, "
-            "ChatGPT desktop, and others — can read and edit Google Docs "
+            "clients that launch a local stdio server — Claude Desktop, the "
+            "Codex CLI, and others — can read and edit Google Docs "
             "without shell access. Authenticate first with `gdoc auth`; the "
             "server cannot open a browser for the OAuth flow."
         ),

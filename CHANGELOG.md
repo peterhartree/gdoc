@@ -8,8 +8,8 @@ All notable changes to `gdoc` are documented here. This project follows
 
 ### Added
 - **MCP server: `gdoc mcp`.** Serves gdoc over the Model Context Protocol
-  on stdio, so desktop chat clients that launch a local server (Claude
-  Desktop, ChatGPT desktop) can read and edit Docs without shell access —
+  on stdio, so clients that launch a local server (Claude Desktop, the
+  Codex CLI) can read and edit Docs without shell access —
   previously gdoc was only reachable from a coding agent. 29 subcommands
   are exposed as tools, with input schemas derived from the argparse
   parser so new flags surface automatically. `--read-only` restricts the
