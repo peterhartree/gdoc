@@ -4,6 +4,23 @@ All notable changes to `gdoc` are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **MCP server: `gdoc mcp`.** Serves gdoc over the Model Context Protocol
+  on stdio, so desktop chat clients that launch a local server (Claude
+  Desktop, ChatGPT desktop) can read and edit Docs without shell access —
+  previously gdoc was only reachable from a coding agent. 31 subcommands
+  are exposed as tools, with input schemas derived from the argparse
+  parser so new flags surface automatically. `--read-only` restricts the
+  surface to commands that cannot modify Docs or Drive, `--allow` takes an
+  explicit subset, and `--account` pins every call to one account.
+  `write` and `insert` additionally accept inline `text`, since a chat
+  client has no filesystem to write a markdown file to. No new
+  dependencies: the stdio transport is newline-delimited JSON-RPC 2.0,
+  implemented in `gdoc/mcp.py`. Commands run in-process through the same
+  dispatch as the CLI, factored out of `main()` as `run_argv()`.
+
 ## [0.19.0] — 2026-08-07
 
 ### Added

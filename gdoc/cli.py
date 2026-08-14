@@ -3453,6 +3453,22 @@ def cmd_update(args) -> int:
     return run_update()
 
 
+def cmd_mcp(args) -> int:
+    """Handler for `gdoc mcp`: serve gdoc over MCP on stdio."""
+    from gdoc.mcp import MCPServer
+
+    allow = None
+    if getattr(args, "allow", None):
+        allow = {c.strip().lower() for c in args.allow.split(",") if c.strip()}
+
+    server = MCPServer(
+        read_only=getattr(args, "read_only", False),
+        allow=allow,
+        account=getattr(args, "account", None),
+    )
+    return server.serve()
+
+
 def build_parser() -> GdocArgumentParser:
     """Build the CLI argument parser with all subcommands."""
     parser = GdocArgumentParser(
@@ -3506,6 +3522,35 @@ def build_parser() -> GdocArgumentParser:
     # update
     update_p = sub.add_parser("update", help="Update gdoc to the latest version")
     update_p.set_defaults(func=cmd_update)
+
+    # mcp
+    mcp_p = sub.add_parser(
+        "mcp",
+        help="Serve gdoc to desktop chat clients over MCP (stdio)",
+        description=(
+            "Run gdoc as a Model Context Protocol server on stdin/stdout, so "
+            "clients that launch a local stdio server — Claude Desktop, "
+            "ChatGPT desktop, and others — can read and edit Google Docs "
+            "without shell access. Authenticate first with `gdoc auth`; the "
+            "server cannot open a browser for the OAuth flow."
+        ),
+    )
+    mcp_p.add_argument(
+        "--read-only",
+        action="store_true",
+        help="Expose only commands that cannot modify Docs or Drive",
+    )
+    mcp_p.add_argument(
+        "--allow",
+        metavar="COMMANDS",
+        help="Comma-separated subcommands to expose (default: all supported)",
+    )
+    mcp_p.add_argument(
+        "--account",
+        default=os.environ.get("GDOC_ACCOUNT"),
+        help="Google account to use for every tool call",
+    )
+    mcp_p.set_defaults(func=cmd_mcp)
 
     # auth
     auth_p = sub.add_parser("auth", parents=[output_parent], help="Authenticate with Google")
@@ -4272,14 +4317,14 @@ def _is_top_level_help_invocation(argv: list[str]) -> bool:
     return rest[0] in ("--help", "-h")
 
 
-def main() -> int:
-    """Entry point for the gdoc CLI."""
-    if _is_top_level_help_invocation(sys.argv):
-        from gdoc.update import auto_update_for_help
-        auto_update_for_help()
+def run_argv(argv: list[str] | None = None, *, check_updates: bool = True) -> int:
+    """Parse an argv list and run the matching subcommand.
 
+    Shared by `main()` and by the MCP server (`gdoc mcp`), which dispatches
+    tool calls in-process rather than shelling out to a new interpreter.
+    """
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.command is None:
         parser.print_help(sys.stderr)
@@ -4310,7 +4355,9 @@ def main() -> int:
             set_active_account(account)
 
         # Check for updates (skip for the update command itself and internal hooks)
-        if args.command not in ("update", "_sync-hook", "_pull-hook"):
+        if check_updates and args.command not in (
+            "update", "_sync-hook", "_pull-hook", "mcp",
+        ):
             from gdoc.update import check_for_update
             check_for_update()
 
@@ -4324,3 +4371,12 @@ def main() -> int:
     except Exception as e:
         print(f"ERR: unexpected error: {e}", file=sys.stderr)
         return 1
+
+
+def main() -> int:
+    """Entry point for the gdoc CLI."""
+    if _is_top_level_help_invocation(sys.argv):
+        from gdoc.update import auto_update_for_help
+        auto_update_for_help()
+
+    return run_argv()

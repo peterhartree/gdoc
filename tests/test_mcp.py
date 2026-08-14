@@ -1,0 +1,327 @@
+"""Tests for the MCP server (`gdoc mcp`)."""
+
+import io
+import json
+import os
+
+import pytest
+
+from gdoc import mcp
+
+# -- tool construction ---------------------------------------------------
+
+
+def test_build_tools_exposes_prefixed_names():
+    tools = mcp.build_tools()
+    assert "gdoc_cat" in tools
+    assert "gdoc_comment_info" in tools
+    # Not exposed: interactive, machine-wide, or local-path commands.
+    assert "gdoc_auth" not in tools
+    assert "gdoc_update" not in tools
+    assert "gdoc_pull" not in tools
+
+
+def test_read_only_drops_write_commands():
+    tools = mcp.build_tools(read_only=True)
+    assert "gdoc_cat" in tools
+    assert "gdoc_edit" not in tools
+    assert "gdoc_share" not in tools
+
+
+def test_allow_list_restricts_surface():
+    tools = mcp.build_tools(allow={"cat", "ls"})
+    assert set(tools) == {"gdoc_cat", "gdoc_ls"}
+
+
+def test_schema_derived_from_argparse():
+    schema = mcp.build_tools(allow={"edit"})["gdoc_edit"]["inputSchema"]
+    props = schema["properties"]
+
+    assert schema["required"] == ["doc"]
+    assert props["doc"]["type"] == "string"
+    assert props["old_text"]["type"] == "string"
+    assert props["all"]["type"] == "boolean"  # store_true
+    assert props["table"]["type"] == "integer"  # type=int
+    # Output plumbing is not a tool parameter.
+    assert "verbose" not in props
+    assert "func" not in props
+
+
+def test_choices_become_enum():
+    props = mcp.build_tools(allow={"insert"})["gdoc_insert"]["inputSchema"][
+        "properties"
+    ]
+    assert props["position"]["enum"] == ["start", "end"]
+
+
+def test_write_tools_accept_inline_text():
+    schema = mcp.build_tools(allow={"write"})["gdoc_write"]["inputSchema"]
+    assert "text" in schema["properties"]
+    # `file` must stop being required once `text` is an option.
+    assert schema["required"] == ["doc"]
+
+
+def test_write_command_description_flags_mutation():
+    tool = mcp.build_tools(allow={"share"})["gdoc_share"]
+    assert "Writes to Google Docs/Drive." in tool["description"]
+
+
+# -- argv construction ---------------------------------------------------
+
+
+def _subparser(command):
+    from gdoc.cli import build_parser
+
+    return mcp._subparsers(build_parser())[command]
+
+
+def test_argv_orders_options_before_positionals():
+    argv = mcp._argv_for(
+        "edit",
+        {"doc": "DOC1", "old_text": "a", "new_text": "b", "all": True},
+        _subparser("edit"),
+    )
+    assert argv[0] == "edit"
+    assert "--all" in argv
+    # Positionals keep parser declaration order and follow every option.
+    assert argv[-3:] == ["DOC1", "a", "b"]
+    assert argv.index("--all") < argv.index("DOC1")
+
+
+def test_argv_passes_option_values():
+    argv = mcp._argv_for(
+        "cat", {"doc": "DOC1", "tab": "Notes"}, _subparser("cat"),
+    )
+    assert argv[argv.index("--tab") + 1] == "Notes"
+
+
+def test_argv_omits_false_booleans():
+    argv = mcp._argv_for("edit", {"doc": "D", "all": False}, _subparser("edit"))
+    assert "--all" not in argv
+
+
+def test_argv_rejects_unknown_arguments():
+    with pytest.raises(ValueError, match="unknown argument"):
+        mcp._argv_for("cat", {"doc": "D", "nope": 1}, _subparser("cat"))
+
+
+def test_inline_text_is_written_to_a_temp_file():
+    with mcp._materialised_text("write", {"doc": "D", "text": "# Hi"}) as prepared:
+        assert "text" not in prepared
+        path = prepared["file"]
+        with open(path, encoding="utf-8") as handle:
+            assert handle.read() == "# Hi"
+    assert not os.path.exists(path)  # cleaned up after the call
+
+
+def test_inline_text_and_file_conflict():
+    with pytest.raises(ValueError, match="not both"):
+        with mcp._materialised_text("write", {"doc": "D", "text": "x", "file": "f"}):
+            pass
+
+
+# -- command execution ---------------------------------------------------
+
+
+def test_call_command_captures_stdout(mocker):
+    def fake_run(argv, check_updates=True):
+        print("hello from gdoc")
+        return 0
+
+    mocker.patch("gdoc.cli.run_argv", side_effect=fake_run)
+    stdout, stderr, code = mcp.call_command("cat", {"doc": "DOC1"})
+    assert stdout.strip() == "hello from gdoc"
+    assert code == 0
+
+
+def test_call_command_reports_exit_code(mocker):
+    def fake_run(argv, check_updates=True):
+        print("ERR: nope", file=__import__("sys").stderr)
+        return 3
+
+    mocker.patch("gdoc.cli.run_argv", side_effect=fake_run)
+    _, stderr, code = mcp.call_command("cat", {"doc": "DOC1"})
+    assert code == 3
+    assert "nope" in stderr
+
+
+def test_account_state_is_reset_between_calls(mocker):
+    """A named account must not leak into the next tool call."""
+    from gdoc import util
+
+    mocker.patch("gdoc.cli.run_argv", return_value=0)
+    clear = mocker.patch("gdoc.api.get_drive_service.cache_clear")
+
+    try:
+        mcp.call_command("cat", {"doc": "D", "account": "work"})
+        assert util.get_active_account() == "work"
+        assert clear.called
+
+        mcp.call_command("cat", {"doc": "D"})
+        assert util.get_active_account() is None
+    finally:
+        util.set_active_account(None)
+
+
+def test_account_state_reset_is_skipped_when_unchanged(mocker):
+    """Repeat calls on one account keep their cached service objects."""
+    from gdoc import util
+
+    mocker.patch("gdoc.cli.run_argv", return_value=0)
+    try:
+        mcp.call_command("cat", {"doc": "D", "account": "work"})
+        clear = mocker.patch("gdoc.api.get_drive_service.cache_clear")
+        mcp.call_command("cat", {"doc": "D", "account": "work"})
+        assert not clear.called
+    finally:
+        util.set_active_account(None)
+
+
+def test_clean_notes_drops_no_change_banner():
+    assert mcp._clean_notes("---\n--- no changes ---\n") == ""
+    assert "doc edited" in mcp._clean_notes(
+        "--- since last interaction ---\n ✎ doc edited by A\n---\n"
+    )
+
+
+# -- protocol ------------------------------------------------------------
+
+
+def test_initialize_echoes_known_protocol_version():
+    server = mcp.MCPServer()
+    result = server.dispatch({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"protocolVersion": "2024-11-05"},
+    })["result"]
+    assert result["protocolVersion"] == "2024-11-05"
+    assert result["serverInfo"]["name"] == "gdoc"
+    assert "tools" in result["capabilities"]
+
+
+def test_initialize_falls_back_for_unknown_version():
+    server = mcp.MCPServer()
+    result = server.dispatch({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"protocolVersion": "1999-01-01"},
+    })["result"]
+    assert result["protocolVersion"] == mcp.DEFAULT_PROTOCOL_VERSION
+
+
+def test_notifications_get_no_response():
+    server = mcp.MCPServer()
+    assert server.dispatch({
+        "jsonrpc": "2.0", "method": "notifications/initialized",
+    }) is None
+
+
+def test_unknown_method_returns_method_not_found():
+    server = mcp.MCPServer()
+    response = server.dispatch({"jsonrpc": "2.0", "id": 7, "method": "nope"})
+    assert response["error"]["code"] == -32601
+
+
+def test_tools_call_unknown_tool_is_a_tool_error():
+    server = mcp.MCPServer()
+    result = server.dispatch({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "gdoc_nope", "arguments": {}},
+    })["result"]
+    assert result["isError"] is True
+    assert "no such tool" in result["content"][0]["text"]
+
+
+def test_tools_call_returns_stdout(mocker):
+    mocker.patch(
+        "gdoc.mcp.call_command", return_value=("doc body", "", 0),
+    )
+    server = mcp.MCPServer()
+    result = server.dispatch({
+        "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": {"name": "gdoc_cat", "arguments": {"doc": "D"}},
+    })["result"]
+    assert result["isError"] is False
+    assert result["content"][0]["text"] == "doc body"
+
+
+def test_tools_call_surfaces_failure(mocker):
+    mocker.patch(
+        "gdoc.mcp.call_command", return_value=("", "ERR: Document not found", 1),
+    )
+    server = mcp.MCPServer()
+    result = server.dispatch({
+        "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+        "params": {"name": "gdoc_cat", "arguments": {"doc": "D"}},
+    })["result"]
+    assert result["isError"] is True
+    assert "Document not found" in result["content"][0]["text"]
+
+
+def test_account_default_is_applied(mocker):
+    call = mocker.patch("gdoc.mcp.call_command", return_value=("ok", "", 0))
+    server = mcp.MCPServer(account="work")
+    server.dispatch({
+        "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+        "params": {"name": "gdoc_cat", "arguments": {"doc": "D"}},
+    })
+    assert call.call_args[0][1]["account"] == "work"
+
+
+def test_explicit_account_wins_over_default(mocker):
+    call = mocker.patch("gdoc.mcp.call_command", return_value=("ok", "", 0))
+    server = mcp.MCPServer(account="work")
+    server.dispatch({
+        "jsonrpc": "2.0", "id": 6, "method": "tools/call",
+        "params": {"name": "gdoc_cat", "arguments": {"doc": "D", "account": "home"}},
+    })
+    assert call.call_args[0][1]["account"] == "home"
+
+
+# -- transport -----------------------------------------------------------
+
+
+def test_serve_round_trip(mocker):
+    mocker.patch("gdoc.mcp.call_command", return_value=("body", "", 0))
+    stdin = io.StringIO(
+        json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {},
+        }) + "\n"
+        + json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"
+        + json.dumps({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {},
+        }) + "\n"
+    )
+    stdout = io.StringIO()
+
+    assert mcp.MCPServer().serve(stdin=stdin, stdout=stdout) == 0
+
+    responses = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    # The notification must not produce a response.
+    assert [r["id"] for r in responses] == [1, 2]
+    assert len(responses[1]["result"]["tools"]) > 10
+
+
+def test_serve_reports_malformed_json():
+    stdout = io.StringIO()
+    mcp.MCPServer().serve(stdin=io.StringIO("not json\n"), stdout=stdout)
+    assert json.loads(stdout.getvalue())["error"]["code"] == -32700
+
+
+def test_serve_protects_the_protocol_stream_from_stray_prints(mocker):
+    """A print() outside the per-call capture must not corrupt stdout."""
+    import sys
+
+    def leaky(*args, **kwargs):
+        print("stray output", file=sys.stdout)
+        return ("body", "", 0)
+
+    mocker.patch("gdoc.mcp.call_command", side_effect=leaky)
+    stdin = io.StringIO(json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "gdoc_cat", "arguments": {"doc": "D"}},
+    }) + "\n")
+    stdout = io.StringIO()
+
+    mcp.MCPServer().serve(stdin=stdin, stdout=stdout)
+    # Every line on the protocol stream is still valid JSON-RPC.
+    for line in stdout.getvalue().splitlines():
+        assert json.loads(line)["jsonrpc"] == "2.0"

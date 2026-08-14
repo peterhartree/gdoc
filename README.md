@@ -255,7 +255,68 @@ expired auth, still do).
 | `mkdir TITLE` | Create a Drive folder (`--parent FOLDER`) |
 | `mv DOC FOLDER` | Move a file into a folder (alias: `move`) |
 | `rename DOC TITLE` | Rename a file |
+| `mcp` | Serve gdoc to desktop chat apps over MCP (`--read-only`, `--allow`) |
 | `update` | Update gdoc to the latest release |
+
+## Desktop chat apps (MCP)
+
+`gdoc mcp` runs gdoc as a [Model Context Protocol](https://modelcontextprotocol.io)
+server on stdio, so chat clients that launch a local server — Claude
+Desktop, ChatGPT desktop, and others — can use gdoc without shell access.
+Each supported subcommand becomes a tool (`gdoc_cat`, `gdoc_edit`, …),
+with its parameters derived from the CLI itself.
+
+Authenticate first — the server cannot open a browser for the OAuth flow:
+
+```bash
+gdoc auth
+```
+
+**Claude Desktop** — add to `claude_desktop_config.json` (Settings →
+Developer → Edit Config), then restart the app:
+
+```json
+{
+  "mcpServers": {
+    "gdoc": {
+      "command": "gdoc",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+If the app can't find `gdoc` on its PATH, use the absolute path from
+`which gdoc`.
+
+**ChatGPT desktop** — add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.gdoc]
+command = "gdoc"
+args = ["mcp"]
+```
+
+Useful flags:
+
+```bash
+# Reading only — nothing that can modify a Doc or Drive is exposed
+gdoc mcp --read-only
+
+# Expose a specific subset
+gdoc mcp --allow cat,find,comments,comment
+
+# Pin every tool call to one account
+gdoc mcp --account work
+```
+
+Two ways the tools differ from the CLI:
+
+- `write` and `insert` also accept inline `text`, since a chat client has
+  no filesystem to put a markdown file on.
+- `auth`, `update`, `config`, `pull`, `push`, and `export` are not
+  exposed: they need a browser, change the install, or read and write
+  local paths the client cannot see.
 
 ## Output modes
 
