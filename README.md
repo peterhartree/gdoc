@@ -306,17 +306,28 @@ gdoc mcp --read-only
 # Expose a specific subset
 gdoc mcp --allow cat,find,comments,comment
 
-# Pin every tool call to one account
+# Default account for every tool call (an explicit `account`
+# argument on a call still wins)
 gdoc mcp --account work
 ```
 
-Two ways the tools differ from the CLI:
+If `GDOC_ALLOW_COMMANDS` is set in the environment the client launches
+the server with, it restricts the tool surface too — and must include
+`mcp` for the server to start at all.
 
-- `write` and `insert` also accept inline `text`, since a chat client has
-  no filesystem to put a markdown file on.
-- `auth`, `update`, `config`, `pull`, `push`, and `export` are not
-  exposed: they need a browser, change the install, or read and write
-  local paths the client cannot see.
+How the tools differ from the CLI:
+
+- `write`, `insert`, and `new` take markdown content as inline `text`
+  instead of a local file path.
+- Parameters that name local files (`edit --old-file/--new-file`,
+  `diff FILE`/`--out`, `images --download`, …) are not exposed: a chat
+  client cannot see the server's filesystem, and hiding them keeps a
+  prompt-injected model from reading or writing files on the host.
+- `auth`, `update`, `config`, `pull`, `push`, `export`, `insert-image`,
+  and `replace-image` are not exposed: they need a browser, change the
+  install, or only work on local paths.
+- `diff` reporting "differences found" (exit code 1 in the CLI,
+  diff-style) is a normal result, not an error.
 
 ## Output modes
 

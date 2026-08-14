@@ -686,7 +686,7 @@ def cmd_insert(args) -> int:
     if not os.path.isfile(file_path):
         raise GdocError(f"file not found: {file_path}", exit_code=3)
     try:
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             content = f.read()
     except OSError as e:
         raise GdocError(f"cannot read file: {e}", exit_code=3) from e
@@ -1326,7 +1326,7 @@ def cmd_write(args) -> int:
     if not os.path.isfile(file_path):
         raise GdocError(f"file not found: {file_path}", exit_code=3)
     try:
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             content = f.read()
     except OSError as e:
         raise GdocError(f"cannot read file: {e}", exit_code=3) from e
@@ -1440,7 +1440,7 @@ def cmd_pull(args) -> int:
     content = add_frontmatter(markdown, front)
 
     try:
-        with open(file_path, "w") as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)
     except OSError as e:
         raise GdocError(f"cannot write file: {e}", exit_code=3)
@@ -1500,7 +1500,7 @@ def cmd_push(args) -> int:
     if not os.path.isfile(file_path):
         raise GdocError(f"file not found: {file_path}", exit_code=3)
     try:
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             content = f.read()
     except OSError as e:
         raise GdocError(f"cannot read file: {e}", exit_code=3)
@@ -1595,7 +1595,7 @@ def cmd_sync_hook(args) -> int:
         if not os.path.isfile(file_path):
             return 0
 
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             content = f.read()
 
         from gdoc.frontmatter import parse_frontmatter
@@ -1664,7 +1664,7 @@ def cmd_pull_hook(args) -> int:
         if not os.path.isfile(file_path):
             return 0
 
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             content = f.read()
 
         from gdoc.frontmatter import parse_frontmatter
@@ -1700,7 +1700,7 @@ def cmd_pull_hook(args) -> int:
 
         new_content = add_frontmatter(markdown, {"gdoc": doc_id, "title": title})
 
-        with open(file_path, "w") as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             f.write(new_content)
 
         print(
@@ -2942,7 +2942,7 @@ def _cmd_new_from_file(args) -> int:
     if not os.path.isfile(file_path):
         raise GdocError(f"file not found: {file_path}", exit_code=3)
     try:
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             content = f.read()
     except OSError as e:
         raise GdocError(f"cannot read file: {e}", exit_code=3)

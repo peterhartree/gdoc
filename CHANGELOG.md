@@ -10,16 +10,29 @@ All notable changes to `gdoc` are documented here. This project follows
 - **MCP server: `gdoc mcp`.** Serves gdoc over the Model Context Protocol
   on stdio, so desktop chat clients that launch a local server (Claude
   Desktop, ChatGPT desktop) can read and edit Docs without shell access —
-  previously gdoc was only reachable from a coding agent. 31 subcommands
+  previously gdoc was only reachable from a coding agent. 29 subcommands
   are exposed as tools, with input schemas derived from the argparse
   parser so new flags surface automatically. `--read-only` restricts the
-  surface to commands that cannot modify Docs or Drive, `--allow` takes an
-  explicit subset, and `--account` pins every call to one account.
-  `write` and `insert` additionally accept inline `text`, since a chat
-  client has no filesystem to write a markdown file to. No new
-  dependencies: the stdio transport is newline-delimited JSON-RPC 2.0,
-  implemented in `gdoc/mcp.py`. Commands run in-process through the same
-  dispatch as the CLI, factored out of `main()` as `run_argv()`.
+  surface to commands that cannot modify Docs or Drive, `--allow` takes
+  an explicit subset (`GDOC_ALLOW_COMMANDS` is honoured too), and
+  `--account` sets the account for every call (an explicit `account`
+  argument on a call wins). `write`, `insert`, and `new` take markdown
+  content as inline `text`, since a chat client has no filesystem to
+  write a markdown file to; parameters that name local files
+  (`edit --old-file/--new-file`, `diff FILE`/`--out`/`--format html`,
+  `images --download`, `cells --file/--stdin`) are not exposed at all,
+  so a prompt-injected model cannot read or write files on the host.
+  `diff` reporting "differences found" (CLI exit code 1) is a normal
+  result, not a tool error. No new dependencies: the stdio transport is
+  newline-delimited JSON-RPC 2.0, implemented in `gdoc/mcp.py`. Commands
+  run in-process through the same dispatch as the CLI, factored out of
+  `main()` as `run_argv()`; each call runs with stdin detached so a
+  stdin-reading command can never swallow the protocol stream.
+
+### Fixed
+- Markdown file reads and writes (`write`, `insert`, `new --file`,
+  `push`, `pull`, sync hooks) now use explicit UTF-8 instead of the
+  locale default encoding.
 
 ## [0.19.0] — 2026-08-07
 
