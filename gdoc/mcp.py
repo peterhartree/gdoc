@@ -395,6 +395,10 @@ def _argv_for(
 
         flag = max(action.option_strings, key=len)
         if isinstance(action, (argparse._StoreTrueAction, argparse._StoreFalseAction)):
+            # Strict: a truthy string like "false" must not enable an
+            # opt-in flag — several of them guard destructive behavior.
+            if not isinstance(value, bool):
+                raise ValueError(f"`{dest}` must be a boolean")
             if value:
                 options.append(flag)
         elif isinstance(action, argparse._AppendAction) and isinstance(value, list):
@@ -497,6 +501,12 @@ def _reject_local_paths(command: str, arguments: dict[str, Any]) -> None:
             )
 
 
+# The configured default account the cached services were built under.
+# Unpinned calls must notice `gdoc auth --set-default` happening in
+# another terminal while the server is running.
+_serving_default: str | None = None
+
+
 def _reset_account_state(account: str | None) -> None:
     """Make each tool call behave like a fresh CLI invocation.
 
@@ -506,10 +516,25 @@ def _reset_account_state(account: str | None) -> None:
     names an account would leak into every later call, and cached service
     objects would keep using the first account's credentials.
     """
-    from gdoc.util import get_active_account, set_active_account
+    global _serving_default
+    from gdoc.util import (
+        get_active_account,
+        get_default_account,
+        set_active_account,
+    )
 
     if account == get_active_account():
-        return
+        if account is not None:
+            return
+        # No explicit account: credentials resolve through the configured
+        # default at call time, so a changed default must also drop the
+        # cached services.
+        default = get_default_account()
+        if default == _serving_default:
+            return
+        _serving_default = default
+    elif account is None:
+        _serving_default = get_default_account()
 
     from gdoc.api import clear_service_caches
 

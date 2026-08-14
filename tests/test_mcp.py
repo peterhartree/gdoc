@@ -11,9 +11,12 @@ from gdoc import mcp
 
 @pytest.fixture(autouse=True)
 def _clean_gdoc_env(monkeypatch):
-    """Ambient GDOC_* settings must not change tool construction."""
+    """Ambient GDOC_* settings and the machine's configured default
+    account must not change tool construction or account tracking."""
     monkeypatch.delenv("GDOC_ALLOW_COMMANDS", raising=False)
     monkeypatch.delenv("GDOC_ACCOUNT", raising=False)
+    monkeypatch.setattr(mcp, "_serving_default", None)
+    monkeypatch.setattr("gdoc.util.get_default_account", lambda: None)
 
 
 # -- tool construction ---------------------------------------------------
@@ -201,6 +204,23 @@ def test_argv_rejects_skipped_middle_positional():
         )
 
 
+def test_boolean_flags_require_real_booleans():
+    """A truthy string like "false" must not enable an opt-in flag —
+    some of them (write --force-collapse-tabs) guard destructive paths."""
+    with pytest.raises(ValueError, match="must be a boolean"):
+        mcp._argv_for(
+            "write",
+            {"doc": "D", "file": "f", "force_collapse_tabs": "false"},
+            _subparser("write"),
+        )
+    argv = mcp._argv_for(
+        "write",
+        {"doc": "D", "file": "f", "force_collapse_tabs": True},
+        _subparser("write"),
+    )
+    assert "--force-collapse-tabs" in argv
+
+
 def test_argv_omits_false_booleans():
     argv = mcp._argv_for("edit", {"doc": "D", "all": False}, _subparser("edit"))
     assert "--all" not in argv
@@ -334,6 +354,26 @@ def test_account_state_reset_is_skipped_when_unchanged(mocker):
         clear = mocker.patch("gdoc.api.get_drive_service.cache_clear")
         mcp.call_command("cat", {"doc": "D", "account": "work"})
         assert not clear.called
+    finally:
+        util.set_active_account(None)
+
+
+def test_default_account_change_invalidates_caches(mocker):
+    """`gdoc auth --set-default` in another terminal must not leave a
+    running server on the old default's cached credentials."""
+    from gdoc import util
+
+    mocker.patch("gdoc.cli.run_argv", return_value=0)
+    default = mocker.patch("gdoc.util.get_default_account", return_value="a")
+    try:
+        mcp.call_command("cat", {"doc": "D"})  # caches built under "a"
+        clear = mocker.patch("gdoc.api.clear_service_caches")
+        mcp.call_command("cat", {"doc": "D"})
+        assert not clear.called  # default unchanged: keep the caches
+
+        default.return_value = "b"
+        mcp.call_command("cat", {"doc": "D"})
+        assert clear.called  # default changed: drop them
     finally:
         util.set_active_account(None)
 
