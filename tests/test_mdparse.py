@@ -741,13 +741,38 @@ class TestNestedLists:
         bullets = [s for s in result.styles if s.type == "bullets"]
         assert len(bullets) == 2
 
-    def test_four_space_indent_is_two_levels(self):
-        result = parse_markdown("- a\n    - b")
-        assert result.plain_text == "a\n\t\tb\n"
+    def test_four_space_indent_is_one_level(self):
+        # Nesting is relative to the parent item, as in CommonMark (#67).
+        result = parse_markdown("- a\n    - b\n        - c")
+        assert result.plain_text == "a\n\tb\n\t\tc\n"
+
+    def test_tab_indent_is_one_level(self):
+        result = parse_markdown("- a\n\t- b")
+        assert result.plain_text == "a\n\tb\n"
 
     def test_numbered_nesting(self):
         result = parse_markdown("1. a\n   1. b")
         assert result.plain_text == "a\n\tb\n"
+
+    def test_sub_items_under_two_digit_numbers(self):
+        result = parse_markdown("9. a\n   - b\n10. c\n    - d")
+        assert result.plain_text == "a\n\tb\nc\n\td\n"
+
+    def test_dedent_returns_to_matching_level(self):
+        result = parse_markdown("- a\n  - b\n    - c\n  - d\n- e")
+        assert result.plain_text == "a\n\tb\n\t\tc\n\td\ne\n"
+
+    def test_one_space_indent_is_a_sibling(self):
+        result = parse_markdown("- a\n - b")
+        assert result.plain_text == "a\nb\n"
+
+    def test_paragraph_ends_the_list_nesting(self):
+        result = parse_markdown("- a\n\np\n\n  - b")
+        assert result.plain_text == "a\n\np\n\nb\n"
+
+    def test_blank_line_keeps_the_list_nesting(self):
+        result = parse_markdown("- a\n\n  - b")
+        assert result.plain_text == "a\n\n\tb\n"
 
     def test_inline_styles_offset_past_leading_tabs(self):
         result = parse_markdown("- a\n  - **b**")
@@ -787,17 +812,48 @@ class TestNewToDocsRequests:
         ]
         assert starts == sorted(starts)
 
-    def test_nested_bullet_range_adjusted_for_removed_tabs(self):
-        # The level-1 item removes 1 tab; the following level-0 item's
-        # createParagraphBullets range is shifted left by that 1.
+    def test_nested_list_is_bulleted_in_one_request(self):
+        # Docs sets each item's level from its tabs minus the fewest tabs in
+        # the request's range, so a nested list must be one range (#67).
         reqs = to_docs_requests(
             parse_markdown("- a\n  - b\n- c"), insert_index=1,
+        )
+        ranges = [
+            r["createParagraphBullets"]["range"]
+            for r in reqs if "createParagraphBullets" in r
+        ]
+        assert [(r["startIndex"], r["endIndex"]) for r in ranges] == [(1, 8)]
+
+    def test_next_list_range_adjusted_for_removed_tabs(self):
+        # The first list's nested item removes 1 tab, so the second list's
+        # range (after a plain paragraph) is shifted left by that 1.
+        reqs = to_docs_requests(
+            parse_markdown("- a\n  - b\n\np\n\n- c"), insert_index=1,
         )
         starts = [
             r["createParagraphBullets"]["range"]["startIndex"]
             for r in reqs if "createParagraphBullets" in r
         ]
-        assert starts == [1, 3, 5]
+        # "a\n\tb\n\np\n\nc\n": c starts at 9, less the removed tab.
+        assert starts == [1, 1 + 9 - 1]
+
+    def test_bullets_nested_under_numbered_items_join_the_numbered_list(self):
+        reqs = to_docs_requests(
+            parse_markdown("1. a\n   - b\n2. c"), insert_index=1,
+        )
+        bullets = [r["createParagraphBullets"] for r in reqs if "createParagraphBullets" in r]
+        assert len(bullets) == 1
+        assert bullets[0]["bulletPreset"] == "NUMBERED_DECIMAL_ALPHA_ROMAN"
+
+    def test_top_level_change_of_kind_starts_a_new_list(self):
+        reqs = to_docs_requests(
+            parse_markdown("- a\n1. b"), insert_index=1,
+        )
+        presets = [
+            r["createParagraphBullets"]["bulletPreset"]
+            for r in reqs if "createParagraphBullets" in r
+        ]
+        assert presets == ["BULLET_DISC_CIRCLE_SQUARE", "NUMBERED_DECIMAL_ALPHA_ROMAN"]
 
 
 class TestTableTabAdjustment:

@@ -246,13 +246,21 @@ def _scan(text: str, masked: str) -> tuple[str, list[StyleRange]]:
     return "".join(plain_parts), styles
 
 
-def _list_level(indent: str) -> int:
+def _list_level(indent: str, open_items: list[int]) -> int:
     """Nesting level from a list item's leading whitespace.
 
-    Two columns (or one tab) per level; capped at 8 (Docs' max).
+    ``open_items`` holds the indent columns of the enclosing items, outermost
+    first, and is updated in place. An item indented at least two columns
+    past the item above it is that item's child, so ``- a`` then
+    ``    - b`` is one level deep, as in CommonMark, and so are sub-items under
+    ``1.`` (three columns) and ``10.`` (four). A tab is four columns. Capped
+    at 8 (Docs' max).
     """
-    columns = len(indent.replace("\t", "  "))
-    return min(columns // 2, 8)
+    columns = len(indent.expandtabs(4))
+    while open_items and columns < open_items[-1] + 2:
+        open_items.pop()
+    open_items.append(columns)
+    return min(len(open_items) - 1, 8)
 
 
 def parse_markdown(text: str) -> ParsedMarkdown:
@@ -271,6 +279,7 @@ def parse_markdown(text: str) -> ParsedMarkdown:
     all_tables: list[TableData] = []
     offset = 0
     removed_tabs = 0  # running count of leading list-indent tabs (see below)
+    open_items: list[int] = []  # indents of the enclosing list items
 
     def emit_paragraph(
         content: str,
@@ -311,6 +320,8 @@ def parse_markdown(text: str) -> ParsedMarkdown:
     i = 0
     while i < len(lines):
         line = lines[i]
+        if line.strip() and not (_BULLET_RE.match(line) or _NUMBERED_RE.match(line)):
+            open_items.clear()
 
         # Fenced code block: ``` (or ~~~) ... ```
         fence_m = _FENCE_RE.match(line)
@@ -425,7 +436,7 @@ def parse_markdown(text: str) -> ParsedMarkdown:
                 inline_text, inline_styles,
                 {"namedStyleType": "NORMAL_TEXT"},
                 bullet_preset="BULLET_DISC_CIRCLE_SQUARE",
-                leading_tabs=_list_level(bullet_m.group(1)),
+                leading_tabs=_list_level(bullet_m.group(1), open_items),
             )
             i += 1
             continue
@@ -438,7 +449,7 @@ def parse_markdown(text: str) -> ParsedMarkdown:
                 inline_text, inline_styles,
                 {"namedStyleType": "NORMAL_TEXT"},
                 bullet_preset="NUMBERED_DECIMAL_ALPHA_ROMAN",
-                leading_tabs=_list_level(numbered_m.group(1)),
+                leading_tabs=_list_level(numbered_m.group(1), open_items),
             )
             i += 1
             continue
@@ -542,27 +553,59 @@ def to_docs_requests(
     #    - ordered lists only number continuously (1, 2, 3) when each item is
     #      created after the one above it — reverse order makes each item start
     #      its own list at 1 (and can drop bullets entirely).
-    #    So process top-to-bottom and subtract the tabs that earlier items in
-    #    this same batch have already removed.
+    #    - the nesting level is the item's leading tabs minus the fewest
+    #      leading tabs in the request's range (see listnest.py), so an item
+    #      bulleted on its own always lands at its neighbour's level. Each run
+    #      of adjacent list items is therefore bulleted in one request.
+    #    So process runs top-to-bottom and subtract the tabs that earlier runs
+    #    in this same batch have already removed.
     text = parsed.plain_text
     removed = 0
-    bullet_ranges = [sr for sr in parsed.styles if sr.type == "bullets"]
-    for sr in sorted(bullet_ranges, key=lambda s: s.start):
-        leading = 0
-        while sr.start + leading < len(text) and text[sr.start + leading] == "\t":
-            leading += 1
+    bullet_ranges = sorted(
+        (sr for sr in parsed.styles if sr.type == "bullets"),
+        key=lambda s: s.start,
+    )
+    for run in _list_runs(bullet_ranges, text):
+        start, end = run[0].start, run[-1].end
         requests.append({
             "createParagraphBullets": {
                 "range": _range(
-                    utf16[sr.start] + insert_index - removed,
-                    utf16[sr.end] + insert_index - removed,
+                    utf16[start] + insert_index - removed,
+                    utf16[end] + insert_index - removed,
                 ),
-                "bulletPreset": sr.style["bulletPreset"],
+                "bulletPreset": run[0].style["bulletPreset"],
             }
         })
-        removed += leading
+        removed += sum(_leading_tabs(text, sr.start) for sr in run)
 
     return requests
+
+
+def _leading_tabs(text: str, start: int) -> int:
+    n = 0
+    while start + n < len(text) and text[start + n] == "\t":
+        n += 1
+    return n
+
+
+def _list_runs(bullet_ranges: list[StyleRange], text: str) -> list[list[StyleRange]]:
+    """Group list paragraphs into runs that become one Docs list each.
+
+    A run is a sequence of adjacent list paragraphs; a top-level item of the
+    other kind (numbered vs bullet) starts a new run. Nested items take the
+    run's preset, as the Docs editor does when Tab indents a bullet under a
+    numbered item (it shows as "a.").
+    """
+    runs: list[list[StyleRange]] = []
+    for sr in bullet_ranges:
+        if runs:
+            prev = runs[-1][-1]
+            same_kind = sr.style["bulletPreset"] == runs[-1][0].style["bulletPreset"]
+            if sr.start == prev.end and (same_kind or _leading_tabs(text, sr.start)):
+                runs[-1].append(sr)
+                continue
+        runs.append([sr])
+    return runs
 
 
 def utf16_len(text: str) -> int:
