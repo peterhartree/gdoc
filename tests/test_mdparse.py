@@ -856,6 +856,42 @@ class TestNewToDocsRequests:
         assert presets == ["BULLET_DISC_CIRCLE_SQUARE", "NUMBERED_DECIMAL_ALPHA_ROMAN"]
 
 
+class TestNumberingAcrossParagraphs:
+    @staticmethod
+    def _bullet_reqs(md):
+        reqs = to_docs_requests(parse_markdown(md), insert_index=1)
+        return [r for r in reqs if "createParagraphBullets" in r or "deleteParagraphBullets" in r
+                or ("updateParagraphStyle" in r and r["updateParagraphStyle"]["fields"] == "indentStart,indentFirstLine")]
+
+    def test_resumed_numbered_list_joins_the_list_above(self):
+        # "1. a\n  - b\n## H\n2. c": text "a\n\tb\nH\nc\n"
+        reqs = self._bullet_reqs("1. a\n   - b\n## H\n2. c")
+        assert [next(iter(r)) for r in reqs] == [
+            "createParagraphBullets", "deleteParagraphBullets", "updateParagraphStyle",
+        ]
+        assert reqs[0]["createParagraphBullets"]["range"] == {"startIndex": 1, "endIndex": 10}
+        # After the nested item's tab is removed, "H\n" sits at 5–7.
+        assert reqs[1]["deleteParagraphBullets"]["range"] == {"startIndex": 5, "endIndex": 7}
+        assert reqs[2]["updateParagraphStyle"]["range"] == {"startIndex": 5, "endIndex": 7}
+
+    def test_list_starting_at_one_stays_separate(self):
+        reqs = self._bullet_reqs("1. a\n\np\n\n1. b")
+        assert [next(iter(r)) for r in reqs] == ["createParagraphBullets"] * 2
+
+    def test_bullet_list_between_keeps_lists_separate(self):
+        reqs = self._bullet_reqs("1. a\n\n- x\n\n2. b")
+        assert [next(iter(r)) for r in reqs] == ["createParagraphBullets"] * 3
+
+    def test_table_between_keeps_lists_separate(self):
+        reqs = self._bullet_reqs("1. a\n\n| H |\n|---|\n| x |\n\n2. b")
+        assert [next(iter(r)) for r in reqs] == ["createParagraphBullets"] * 2
+
+    def test_gap_paragraph_keeps_blockquote_indent(self):
+        reqs = self._bullet_reqs("1. a\n> q\n2. b")
+        style = reqs[2]["updateParagraphStyle"]["paragraphStyle"]
+        assert style["indentStart"]["magnitude"] > 0
+
+
 class TestTableTabAdjustment:
     def test_removed_tabs_before_counts_preceding_nest_tabs(self):
         md = "- a\n  - b\n\n| H |\n|---|\n| x |"
