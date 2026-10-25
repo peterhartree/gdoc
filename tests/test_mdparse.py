@@ -841,7 +841,9 @@ class TestNewToDocsRequests:
         reqs = to_docs_requests(
             parse_markdown("1. a\n   - b\n2. c"), insert_index=1,
         )
-        bullets = [r["createParagraphBullets"] for r in reqs if "createParagraphBullets" in r]
+        bullets = [
+            r["createParagraphBullets"] for r in reqs if "createParagraphBullets" in r
+        ]
         assert len(bullets) == 1
         assert bullets[0]["bulletPreset"] == "NUMBERED_DECIMAL_ALPHA_ROMAN"
 
@@ -860,19 +862,25 @@ class TestNumberingAcrossParagraphs:
     @staticmethod
     def _bullet_reqs(md):
         reqs = to_docs_requests(parse_markdown(md), insert_index=1)
-        return [r for r in reqs if "createParagraphBullets" in r or "deleteParagraphBullets" in r
-                or ("updateParagraphStyle" in r and r["updateParagraphStyle"]["fields"] == "indentStart,indentFirstLine")]
+        indent_fields = "indentStart,indentFirstLine"
+        return [
+            r for r in reqs
+            if "createParagraphBullets" in r or "deleteParagraphBullets" in r
+            or r.get("updateParagraphStyle", {}).get("fields") == indent_fields
+        ]
 
     def test_resumed_numbered_list_joins_the_list_above(self):
         # "1. a\n  - b\n## H\n2. c": text "a\n\tb\nH\nc\n"
         reqs = self._bullet_reqs("1. a\n   - b\n## H\n2. c")
         assert [next(iter(r)) for r in reqs] == [
-            "createParagraphBullets", "deleteParagraphBullets", "updateParagraphStyle",
+            "createParagraphBullets", "deleteParagraphBullets",
+            "updateParagraphStyle",
         ]
-        assert reqs[0]["createParagraphBullets"]["range"] == {"startIndex": 1, "endIndex": 10}
+        span = lambda r: (r["range"]["startIndex"], r["range"]["endIndex"])  # noqa: E731
+        assert span(reqs[0]["createParagraphBullets"]) == (1, 10)
         # After the nested item's tab is removed, "H\n" sits at 5–7.
-        assert reqs[1]["deleteParagraphBullets"]["range"] == {"startIndex": 5, "endIndex": 7}
-        assert reqs[2]["updateParagraphStyle"]["range"] == {"startIndex": 5, "endIndex": 7}
+        assert span(reqs[1]["deleteParagraphBullets"]) == (5, 7)
+        assert span(reqs[2]["updateParagraphStyle"]) == (5, 7)
 
     def test_list_starting_at_one_stays_separate(self):
         reqs = self._bullet_reqs("1. a\n\np\n\n1. b")

@@ -604,7 +604,9 @@ def to_docs_requests(
                     }
                     requests.append({
                         "updateParagraphStyle": {
-                            "range": _range(utf16[sr.start] + shift, utf16[sr.end] + shift),
+                            "range": _range(
+                                utf16[sr.start] + shift, utf16[sr.end] + shift,
+                            ),
                             "paragraphStyle": indent,
                             "fields": "indentStart,indentFirstLine",
                         }
